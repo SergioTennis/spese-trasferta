@@ -1,1 +1,5 @@
-const C='spese-v5';const A=['./?v=5','./index.html','./style.css?v=5','./manifest.json'];self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(C).then(c=>c.addAll(A)))});self.addEventListener('activate',e=>e.waitUntil(Promise.all([caches.keys().then(k=>Promise.all(k.filter(x=>x!==C).map(x=>caches.delete(x)))),self.clients.claim()])));self.addEventListener('fetch',e=>{if(e.request.url.includes('firebase')||e.request.url.includes('googleapis'))return;e.respondWith(fetch(e.request).catch(()=>caches.match(e.request)))})
+const CACHE='spese-v7';
+const ASSETS=['./?v=7','./index.html','./style.css?v=7','./manifest.json','./app.js?v=7'];
+self.addEventListener('install',(event)=>{self.skipWaiting();event.waitUntil(caches.open(CACHE).then((cache)=>cache.addAll(ASSETS)))});
+self.addEventListener('activate',(event)=>event.waitUntil(Promise.all([caches.keys().then((keys)=>Promise.all(keys.filter((key)=>key!==CACHE).map((key)=>caches.delete(key)))),self.clients.claim()])));
+self.addEventListener('fetch',(event)=>{if(event.request.url.includes('firebase')||event.request.url.includes('googleapis'))return;event.respondWith(fetch(event.request,{cache:'no-store'}).catch(()=>caches.match(event.request))) });

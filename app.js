@@ -173,6 +173,64 @@ function closeMonthly(){ $('#monthly').classList.add('hidden'); }
 $('#summary').onclick=showMonthly;
 $('#closeMonthly').onclick=closeMonthly;
 $('#monthly').onclick=e=>{if(e.target===$('#monthly')) closeMonthly()};
+
+function safePdfName(value){return String(value||'').replace(/[^a-zA-Z0-9._-]+/g,'-').replace(/^-+|-+$/g,'')||'file'}
+function wrapPdfText(text,font,size,maxWidth){
+  const words=String(text||'').split(/\s+/).filter(Boolean), lines=[]; let line='';
+  for(const word of words){const test=line?`${line} ${word}`:word;if(font.widthOfTextAtSize(test,size)<=maxWidth)line=test;else{if(line)lines.push(line);line=word}}
+  if(line)lines.push(line); return lines.length?lines:[''];
+}
+async function imageBlobToJpegBytes(blob){
+  const url=URL.createObjectURL(blob);
+  try{
+    const img=await new Promise((ok,no)=>{const x=new Image();x.onload=()=>ok(x);x.onerror=no;x.src=url});
+    const max=1800,scale=Math.min(1,max/Math.max(img.naturalWidth,img.naturalHeight));
+    const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(img.naturalWidth*scale));canvas.height=Math.max(1,Math.round(img.naturalHeight*scale));
+    canvas.getContext('2d',{alpha:false}).drawImage(img,0,0,canvas.width,canvas.height);
+    const out=await new Promise((ok)=>canvas.toBlob(ok,'image/jpeg',0.86));
+    if(!out)throw new Error('Conversione immagine non riuscita');
+    return new Uint8Array(await out.arrayBuffer());
+  }finally{URL.revokeObjectURL(url)}
+}
+async function createPdfWithReceipts(){
+  const button=$('#pdfWithReceipts'), old=button.textContent; button.disabled=true; button.textContent='Creazione PDF…';
+  try{
+    const {PDFDocument,StandardFonts,rgb}=await import('https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/+esm');
+    const pdf=await PDFDocument.create(), font=await pdf.embedFont(StandardFonts.Helvetica), bold=await pdf.embedFont(StandardFonts.HelveticaBold);
+    const rows=monthRecords(), monthLabel=new Intl.DateTimeFormat('it-IT',{month:'long',year:'numeric'}).format(view);
+    const priv=rows.filter(x=>x.private).reduce((a,x)=>a+x.amount,0),corp=rows.filter(x=>!x.private).reduce((a,x)=>a+x.amount,0);
+    const addSummaryPage=()=>{const page=pdf.addPage([595.28,841.89]);return {page,y:800}};
+    let {page,y}=addSummaryPage();
+    page.drawText('Spese di trasferta',{x:40,y,font:bold,size:20,color:rgb(.08,.18,.32)});y-=26;
+    page.drawText(monthLabel,{x:40,y,font,size:12,color:rgb(.3,.38,.48)});y-=28;
+    const headers=['Data','Tipologia','Commessa','Carta','Importo','Giust.'], xs=[40,95,205,345,420,505];
+    headers.forEach((h,i)=>page.drawText(h,{x:xs[i],y,font:bold,size:8}));y-=14;
+    const drawRow=(r)=>{const vals=[new Date(r.date+'T12:00:00').toLocaleDateString('it-IT'),r.type,r.job,r.private?'Privata':'Aziendale',eur(r.amount),String(r.attachmentCount||0)];vals.forEach((v,i)=>{const max=[50,105,135,70,80,40][i];const text=wrapPdfText(v,font,8,max)[0];page.drawText(text,{x:xs[i],y,font,size:8})});page.drawLine({start:{x:40,y:y-4},end:{x:555,y:y-4},thickness:.4,color:rgb(.85,.88,.92)});y-=17};
+    if(!rows.length){page.drawText('Nessuna spesa nel mese.',{x:40,y,font,size:10});y-=20}
+    for(const row of rows){if(y<90){({page,y}=addSummaryPage());}drawRow(row)}
+    y-=10; if(y<90){({page,y}=addSummaryPage())}
+    page.drawText(`Carta privata: ${eur(priv)}`,{x:340,y,font,size:10});y-=16;page.drawText(`Carta aziendale: ${eur(corp)}`,{x:340,y,font,size:10});y-=18;page.drawText(`Totale mese: ${eur(priv+corp)}`,{x:340,y,font:bold,size:12});
+    for(const row of rows){
+      const files=await getFiles(row.id);
+      for(const file of files){
+        if(file.type==='application/pdf'){
+          try{const source=await PDFDocument.load(await file.blob.arrayBuffer());const copied=await pdf.copyPages(source,source.getPageIndices());copied.forEach((p)=>pdf.addPage(p))}catch(e){const p=pdf.addPage([595.28,841.89]);p.drawText('Giustificativo PDF non incorporabile',{x:40,y:790,font:bold,size:14});p.drawText(file.name,{x:40,y:765,font,size:10})}
+        }else if((file.type||'').startsWith('image/')){
+          const bytes=await imageBlobToJpegBytes(file.blob), image=await pdf.embedJpg(bytes), p=pdf.addPage([595.28,841.89]);
+          p.drawText(`${new Date(row.date+'T12:00:00').toLocaleDateString('it-IT')} - ${row.type}`,{x:36,y:810,font:bold,size:12});
+          p.drawText(file.name,{x:36,y:792,font,size:9,color:rgb(.3,.38,.48)});
+          const maxW=523,maxH=735,scale=Math.min(maxW/image.width,maxH/image.height,1),w=image.width*scale,h=image.height*scale;
+          p.drawImage(image,{x:(595.28-w)/2,y:35+(735-h)/2,width:w,height:h});
+        }
+      }
+    }
+    const bytes=await pdf.save(),blob=new Blob([bytes],{type:'application/pdf'}),url=URL.createObjectURL(blob),a=document.createElement('a');
+    a.href=url;a.download=`spese-trasferta-${view.getFullYear()}-${String(view.getMonth()+1).padStart(2,'0')}-con-giustificativi.pdf`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+  }catch(error){console.error(error);alert('Creazione del PDF non riuscita. Verifica la connessione e riprova.');}
+  finally{button.disabled=false;button.textContent=old}
+}
+$('#pdfWithReceipts').onclick=createPdfWithReceipts;
+
 $('#printMonthly').onclick=()=>{
   const content = $('#monthlyBody').innerHTML;
   const w = window.open('', '_blank');
@@ -318,6 +376,6 @@ $('#prev').onclick = () => { view = new Date(view.getFullYear(), view.getMonth()
 $('#next').onclick = () => { view = new Date(view.getFullYear(), view.getMonth() + 1, 1); render(); };
 $('#today').onclick = () => { view = new Date(); selected = new Date(); render(); show(); };
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=8');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=9');
 render();
 show();

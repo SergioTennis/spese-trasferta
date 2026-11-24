@@ -151,6 +151,36 @@ async function showAttachments(expenseId) {
   }
 }
 
+
+function monthRecords() {
+  const prefix = `${view.getFullYear()}-${String(view.getMonth() + 1).padStart(2, '0')}-`;
+  const rows = [];
+  Object.entries(days).filter(([date]) => date.startsWith(prefix)).sort(([a],[b]) => a.localeCompare(b)).forEach(([date, record]) => {
+    (record.items || []).forEach((item) => rows.push({date, job: record.job || '', notes: record.notes || '', ...item}));
+  });
+  return rows;
+}
+function monthlyHtml() {
+  const rows = monthRecords();
+  const title = new Intl.DateTimeFormat('it-IT',{month:'long',year:'numeric'}).format(view);
+  const priv = rows.filter(x=>x.private).reduce((a,x)=>a+x.amount,0);
+  const corp = rows.filter(x=>!x.private).reduce((a,x)=>a+x.amount,0);
+  const body = rows.length ? rows.map(x=>`<tr><td>${esc(new Date(x.date+'T12:00:00').toLocaleDateString('it-IT'))}</td><td>${esc(x.type)}</td><td>${esc(x.job)}</td><td>${x.private?'Privata':'Aziendale'}</td><td class="money">${eur(x.amount)}</td><td>${x.attachmentCount||0}</td></tr>`).join('') : '<tr><td colspan="6">Nessuna spesa nel mese.</td></tr>';
+  return `<div class="summary-sheet"><h1>Spese di trasferta</h1><h3>${esc(title)}</h3><table><thead><tr><th>Data</th><th>Tipologia</th><th>Commessa</th><th>Carta</th><th>Importo</th><th>Giust.</th></tr></thead><tbody>${body}</tbody></table><div class="summary-totals"><p>Carta privata <strong>${eur(priv)}</strong></p><p>Carta aziendale <strong>${eur(corp)}</strong></p><p class="summary-grand">Totale mese <strong>${eur(priv+corp)}</strong></p></div></div>`;
+}
+function showMonthly(){ $('#monthlyBody').innerHTML=monthlyHtml(); $('#monthly').classList.remove('hidden'); }
+function closeMonthly(){ $('#monthly').classList.add('hidden'); }
+$('#summary').onclick=showMonthly;
+$('#closeMonthly').onclick=closeMonthly;
+$('#monthly').onclick=e=>{if(e.target===$('#monthly')) closeMonthly()};
+$('#printMonthly').onclick=()=>{
+  const content = $('#monthlyBody').innerHTML;
+  const w = window.open('', '_blank');
+  if(!w){ alert('Consenti i popup per creare il PDF.'); return; }
+  w.document.write(`<!doctype html><html lang="it"><head><meta charset="utf-8"><title>Riepilogo spese</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#142033;padding:24px}h1{margin-bottom:0}h3{margin-top:6px;color:#526174}table{width:100%;border-collapse:collapse;margin-top:24px;font-size:12px}th,td{border-bottom:1px solid #d8dee8;padding:8px;text-align:left}.money{text-align:right;white-space:nowrap}.summary-totals{margin:24px 0 0 auto;max-width:320px}.summary-totals p{display:flex;justify-content:space-between}.summary-grand{border-top:2px solid #173b66;padding-top:10px;font-size:16px}@media print{body{padding:0}}</style></head><body>${content}</body></html>`);
+  w.document.close(); w.focus(); setTimeout(()=>w.print(),250);
+};
+
 $('#closePreview').onclick = closePreview;
 $('#preview').onclick = (event) => { if (event.target === $('#preview')) closePreview(); };
 
@@ -288,6 +318,6 @@ $('#prev').onclick = () => { view = new Date(view.getFullYear(), view.getMonth()
 $('#next').onclick = () => { view = new Date(view.getFullYear(), view.getMonth() + 1, 1); render(); };
 $('#today').onclick = () => { view = new Date(); selected = new Date(); render(); show(); };
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=7');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=8');
 render();
 show();
